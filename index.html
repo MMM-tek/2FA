@@ -2,90 +2,110 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Generador 2FA Local</title>
-    <!-- Importamos la librería OTPAuth para el cálculo del algoritmo RFC 6238 -->
-    <script src="https://cdnjs.cloudflare.com"></script>
+    <title>2FA Nativo LocalStorage</title>
     <style>
-        body { font-family: sans-serif; display: flex; justify-content: center; padding: 20px; background: #f4f4f9; }
-        .card { background: white; padding: 2rem; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); width: 100%; max-width: 400px; text-align: center; }
-        input { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
-        button { background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; width: 100%; }
-        #otp-display { font-size: 3rem; font-weight: bold; color: #007bff; margin: 20px 0; letter-spacing: 5px; }
-        .timer { color: #666; font-size: 0.9rem; }
+        body { font-family: system-ui, sans-serif; display: flex; justify-content: center; padding: 40px; background: #f0f2f5; }
+        .card { background: white; padding: 2rem; border-radius: 15px; box-shadow: 0 8px 20px rgba(0,0,0,0.1); width: 320px; text-align: center; }
+        input { width: 100%; padding: 12px; margin: 10px 0; border: 2px solid #ddd; border-radius: 8px; box-sizing: border-box; font-family: monospace; }
+        button { background: #1a73e8; color: white; border: none; padding: 12px; border-radius: 8px; cursor: pointer; width: 100%; font-weight: bold; }
+        #otp { font-size: 3.5rem; font-weight: 800; color: #1a73e8; margin: 20px 0; font-variant-numeric: tabular-nums; }
+        .progress-bar { height: 5px; background: #eee; border-radius: 3px; overflow: hidden; margin-top: 10px; }
+        #progress { height: 100%; background: #1a73e8; width: 0%; transition: width 1s linear; }
     </style>
 </head>
 <body>
 
 <div class="card">
-    <h2>Mi Generador 2FA</h2>
-    
-    <div id="setup-section">
-        <p>Introduce tu clave secreta (Base32):</p>
-        <input type="text" id="secret-input" placeholder="Ej: JBSWY3DPEHPK3PXP">
-        <button onclick="saveSecret()">Guardar y Empezar</button>
+    <h3>2FA Generator</h3>
+    <div id="setup">
+        <input type="text" id="secret" placeholder="Pega tu clave secreta (Base32)">
+        <button onclick="saveAndStart()">Configurar</button>
     </div>
-
-    <div id="auth-section" style="display:none;">
-        <div id="otp-display">000000</div>
-        <div class="timer">El código cambia en: <span id="seconds">--</span>s</div>
-        <br>
-        <button onclick="resetSecret()" style="background:#dc3545;">Borrar Clave Guardada</button>
+    <div id="display" style="display:none">
+        <div id="otp">000000</div>
+        <div class="progress-bar"><div id="progress"></div></div>
+        <p id="timer">--s</p>
+        <button onclick="reset()" style="background:#ea4335; margin-top: 20px;">Borrar Clave</button>
     </div>
 </div>
 
 <script>
-    let totp;
-
-    // 1. Al cargar, verificamos si ya existe una clave en LocalStorage
-    window.onload = () => {
-        const savedSecret = localStorage.getItem('2fa_secret');
-        if (savedSecret) {
-            initTOTP(savedSecret);
+    // --- Utilidades para Base32 y Conversión ---
+    function base32ToBuf(str) {
+        const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+        str = str.toUpperCase().replace(/=+$/, '');
+        let bin = "";
+        for (let char of str) {
+            let val = alphabet.indexOf(char);
+            if (val === -1) continue;
+            bin += val.toString(2).padStart(5, '0');
         }
-    };
-
-    function saveSecret() {
-        const secret = document.getElementById('secret-input').value.replace(/\s/g, '').toUpperCase();
-        if (secret.length < 8) return alert("Clave no válida");
-        
-        // Guardamos en LocalStorage para persistencia
-        localStorage.setItem('2fa_secret', secret);
-        initTOTP(secret);
+        let buf = new Uint8Array(bin.length / 8);
+        for (let i = 0; i < buf.length; i++) {
+            buf[i] = parseInt(bin.slice(i * 8, i * 8 + 8), 2);
+        }
+        return buf.buffer;
     }
 
-    function initTOTP(secret) {
-        document.getElementById('setup-section').style.display = 'none';
-        document.getElementById('auth-section').style.display = 'block';
+    // --- Lógica Principal TOTP ---
+    async function generateTOTP(secret) {
+        const keyData = base32ToBuf(secret);
+        const epoch = Math.floor(Date.now() / 1000);
+        const counter = Math.floor(epoch / 30);
+        
+        // Preparar contador como Buffer de 8 bytes
+        const counterBuf = new ArrayBuffer(8);
+        const view = new DataView(counterBuf);
+        view.setUint32(4, counter); // El tiempo cabe en 4 bytes por ahora
 
-        // Configuramos el objeto TOTP según el estándar RFC 6238
-        totp = new OTPAuth.TOTP({
-            issuer: "MiApp",
-            label: "Usuario",
-            algorithm: "SHA1",
-            digits: 6,
-            period: 30,
-            secret: secret
-        });
+        // Importar clave para WebCrypto
+        const cryptoKey = await crypto.subtle.importKey(
+            "raw", keyData, { name: "HMAC", hash: "SHA-1" }, false, ["sign"]
+        );
 
-        updateCode();
-        setInterval(updateCode, 1000); // Actualiza cada segundo
+        // Calcular HMAC-SHA1
+        const signature = await crypto.subtle.sign("HMAC", cryptoKey, counterBuf);
+        const hash = new Uint8Array(signature);
+        
+        // Truncado Dinámico (RFC 4226)
+        const offset = hash[hash.length - 1] & 0xf;
+        const code = ((hash[offset] & 0x7f) << 24 | (hash[offset + 1] & 0xff) << 16 | (hash[offset + 2] & 0xff) << 8 | (hash[offset + 3] & 0xff)) % 1000000;
+        
+        return code.toString().padStart(6, '0');
     }
 
-    function updateCode() {
-        if (!totp) return;
+    // --- Interfaz y LocalStorage ---
+    async function refresh() {
+        const secret = localStorage.getItem('2fa_key');
+        if (!secret) return;
+
+        const code = await generateTOTP(secret);
+        document.getElementById('otp').innerText = code;
         
-        // Genera el token actual basado en el tiempo del sistema
-        document.getElementById('otp-display').innerText = totp.generate();
-        
-        // Calcula segundos restantes para el próximo ciclo
-        const seconds = 30 - (Math.floor(Date.now() / 1000) % 30);
-        document.getElementById('seconds').innerText = seconds;
+        const remaining = 30 - (Math.floor(Date.now() / 1000) % 30);
+        document.getElementById('timer').innerText = `Expira en ${remaining}s`;
+        document.getElementById('progress').style.width = (remaining / 30 * 100) + "%";
     }
 
-    function resetSecret() {
-        localStorage.removeItem('2fa_secret');
+    function saveAndStart() {
+        const val = document.getElementById('secret').value.replace(/\s/g, '');
+        if (val) {
+            localStorage.setItem('2fa_key', val);
+            location.reload();
+        }
+    }
+
+    function reset() {
+        localStorage.removeItem('2fa_key');
         location.reload();
+    }
+
+    // Inicialización
+    if (localStorage.getItem('2fa_key')) {
+        document.getElementById('setup').style.display = 'none';
+        document.getElementById('display').style.display = 'block';
+        refresh();
+        setInterval(refresh, 1000);
     }
 </script>
 
