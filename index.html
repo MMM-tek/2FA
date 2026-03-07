@@ -83,7 +83,7 @@
         document.getElementById('otp').innerText = code;
         
         const remaining = 30 - (Math.floor(Date.now() / 1000) % 30);
-        document.getElementById('timer').innerText = `Expira en ${remaining}s`;
+        document.getElementById('timer').innerText = `Expires in ${remaining}s`;
         document.getElementById('progress').style.width = (remaining / 30 * 100) + "%";
     }
 
