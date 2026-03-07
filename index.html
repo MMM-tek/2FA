@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>2FA Nativo LocalStorage</title>
+    <title>2FA</title>
     <style>
         body { font-family: system-ui, sans-serif; display: flex; justify-content: center; padding: 40px; background: #f0f2f5; }
         .card { background: white; padding: 2rem; border-radius: 15px; box-shadow: 0 8px 20px rgba(0,0,0,0.1); width: 320px; text-align: center; }
@@ -18,14 +18,14 @@
 <div class="card">
     <h3>2FA Generator</h3>
     <div id="setup">
-        <input type="text" id="secret" placeholder="Pega tu clave secreta (Base32)">
-        <button onclick="saveAndStart()">Configurar</button>
+        <input type="text" id="secret" placeholder="Enter your Key (Base32)">
+        <button onclick="saveAndStart()">Configure</button>
     </div>
     <div id="display" style="display:none">
         <div id="otp">000000</div>
         <div class="progress-bar"><div id="progress"></div></div>
         <p id="timer">--s</p>
-        <button onclick="reset()" style="background:#ea4335; margin-top: 20px;">Borrar Clave</button>
+        <button onclick="reset()" style="background:#ea4335; margin-top: 20px;">Delete</button>
     </div>
 </div>
 
