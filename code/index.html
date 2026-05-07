@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>2FA Native JS</title>
+    <style>
+        body { font-family: system-ui, -apple-system, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #f0f2f5; }
+        .box { background: white; padding: 2rem; border-radius: 15px; box-shadow: 0 8px 24px rgba(0,0,0,0.1); text-align: center; min-width: 280px; }
+        #code { font-size: 3.5rem; font-weight: 800; color: #1a73e8; margin: 10px 0; font-variant-numeric: tabular-nums; }
+        #progress { width: 100%; height: 4px; background: #eee; border-radius: 2px; margin-top: 15px; overflow: hidden; }
+        #bar { width: 100%; height: 100%; background: #1a73e8; transition: width 1s linear; }
+    </style>
+</head>
+<body>
+
+<div class="box">
+    <div id="code">------</div>
+    <div id="progress"><div id="bar"></div></div>
+    <p id="status">Cargando...</p>
+</div>
+
+<script>
+    // 1. Decodificador Base32 manual (estándar de Google Authenticator)
+    function base32ToBuf(str) {
+        const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+        str = str.toUpperCase().replace(/=+$/, '');
+        let buf = new Uint8Array((str.length * 5 / 8) | 0);
+        let bits = 0, value = 0, index = 0;
+        for (let i = 0; i < str.length; i++) {
+            value = (value << 5) | alphabet.indexOf(str[i]);
+            bits += 5;
+            if (bits >= 8) {
+                buf[index++] = (value >>> (bits - 8)) & 255;
+                bits -= 8;
+            }
+        }
+        return buf;
+    }
+
+    // 2. Generador del código usando Web Crypto API
+    async function generateTOTP() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const secretStr = urlParams.get('code');
+
+        if (!secretStr) {
+            document.getElementById('code').innerText = "ERROR";
+            document.getElementById('status').innerText = "Falta ?code= en la URL";
+            return;
+        }
+
+        try {
+            const secretBuf = base32ToBuf(secretStr);
+            const epoch = Math.floor(Date.now() / 1000);
+            const counter = Math.floor(epoch / 30);
+            
+            // Convertir contador a buffer de 8 bytes
+            const counterBuf = new ArrayBuffer(8);
+            const view = new DataView(counterBuf);
+            view.setUint32(4, counter); 
+
+            // Importar clave para HMAC-SHA1
+            const key = await crypto.subtle.importKey(
+                "raw", secretBuf,
+                { name: "HMAC", hash: "SHA-1" },
+                false, ["sign"]
+            );
+
+            // Calcular el Hash
+            const signature = await crypto.subtle.sign("HMAC", key, counterBuf);
+            const hash = new Uint8Array(signature);
+
+            // Truncamiento dinámico (extraer los 6 dígitos)
+            const offset = hash[hash.length - 1] & 0xf;
+            const binary = ((hash[offset] & 0x7f) << 24) |
+                           ((hash[offset + 1] & 0xff) << 16) |
+                           ((hash[offset + 2] & 0xff) << 8) |
+                           (hash[offset + 3] & 0xff);
+
+            const otp = (binary % 1000000).toString().padStart(6, '0');
+            
+            // Actualizar Interfaz
+            document.getElementById('code').innerText = otp;
+            document.getElementById('status').innerText = "Válido por " + (30 - (epoch % 30)) + "s";
+            document.getElementById('bar').style.width = ((30 - (epoch % 30)) / 30 * 100) + "%";
+
+        } catch (e) {
+            document.getElementById('code').innerText = "INVÁLIDO";
+            document.getElementById('status').innerText = "Clave Base32 corrupta";
+        }
+    }
+
+    // Ejecutar y actualizar cada segundo
+    setInterval(generateTOTP, 1000);
+    generateTOTP();
+</script>
+
+</body>
+</html>
